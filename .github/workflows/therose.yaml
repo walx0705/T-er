@@ -1,12 +1,12 @@
-name: therose Auto Renew
+name: Katabump Auto Renew
 
 on:
   schedule:
-  - cron: '0 7 * * *'   # 每天 UTC 7:00 运行（北京时间 15:00 / 下午3点）
+  - cron: '0 2 */3 * *'   # 每3天2点运行（UTC）
   workflow_dispatch:
 
 jobs:
-  Renew-therose:
+  Renew-Katabump:
     runs-on: ubuntu-latest
     permissions:
       actions: write  
@@ -15,13 +15,16 @@ jobs:
     steps:
     - uses: actions/checkout@v6
 
-    # 1. 拉取完整私库
-    - name: 📥 拉取完整私库
+    # =======================================================
+    # 1. 精准拉取：仅将私库根目录下的 therose.py 拉取到 private_repo
+    - name: 📥 拉取私库 therose.py
       uses: actions/checkout@v6
       with:
         repository: walx0705/hosting
         token: ${{ secrets.GH_TOKEN }}
         path: private_repo
+        sparse-checkout: therose.py
+    # =======================================================
 
     - name: ⚙ 设置 Python
       uses: actions/setup-python@v6
@@ -32,72 +35,34 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y xvfb x11-utils xdotool scrot fonts-noto-cjk
-        pip install seleniumbase requests pysocks
+        pip install seleniumbase requests
         seleniumbase install chromedriver
 
-    # =======================================================
-    # 2. 设置代理（双重端口抓取 + 添加 NO_PROXY 排除本地连接）
-    - name: ⚙ 设置代理 (sing-box) 并提取代理地址
-      continue-on-error: false
+    - name: ⚙ 设置代理 (sing-box)
+      continue-on-error: true
       env:
         NODE_LINK: ${{ secrets.NODE_LINK }}
       run: |
-        # 运行代理脚本
-        bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh) 2>&1 | tee proxy_output.log
-
-        echo "🔍 正在自动探测代理端口..."
-        
-        # 第一重保险：从脚本日志提取 socks5 地址
-        PROXY_SERVER=$(grep -oE 'socks5://[0-9.]+:[0-9]+' proxy_output.log | head -1)
-        
-        # 第二重保险：如果日志没提取到，直接查系统端口
-        if [ -z "$PROXY_SERVER" ]; then
-          echo "⚠️ 日志未提取到，尝试从系统进程中抓取端口..."
-          PORT=$(ss -tlnp 2>/dev/null | grep "sing-box" | grep -oP ":[0-9]+" | head -1 | tr -d ':')
-          if [ -n "$PORT" ]; then
-            PROXY_SERVER="socks5://127.0.0.1:$PORT"
-          else
-            echo "⚠️ 自动识别失败，使用默认代理端口 1080"
-            PROXY_SERVER="socks5://127.0.0.1:1080"
-          fi
-        fi
-
-        echo "✅ 成功锁定代理地址: $PROXY_SERVER"
-        
-        # 导出为系统全局变量
-        echo "PROXY_ADDR=$PROXY_SERVER" >> $GITHUB_ENV
-        echo "HTTP_PROXY=$PROXY_SERVER" >> $GITHUB_ENV
-        echo "HTTPS_PROXY=$PROXY_SERVER" >> $GITHUB_ENV
-        
-        # 🔥 最关键的修复：禁止代理本地流量（防止 ChromeDriver 连不上）
-        echo "NO_PROXY=localhost,127.0.0.1,::1" >> $GITHUB_ENV
-        
-        # 给代理一点启动时间
-        sleep 3
-        rm proxy_output.log
-    # =======================================================
+        bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
     # =======================================================
-    # 3. 运行续期脚本（现在一定可以跑通）
+    # 2. 修改运行命令：从 python3 app.py 改为拉取下来的 therose.py
     - name: 🚀 运行续期脚本
       env:
         EMAIL: ${{ secrets.EMAIL }}
         PASSWORD: ${{ secrets.PASSWORD }}
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        HTTP_PROXY: ${{ secrets.PROXY_URL || '' }}
+        HTTPS_PROXY: ${{ secrets.PROXY_URL || '' }}
       run: |
-        SCRIPT_PATH=$(find private_repo -name "therose.py" | head -1)
-        if [ -z "$SCRIPT_PATH" ]; then
-          echo "❌ 致命错误：在私库中完全找不到 therose.py 文件！"
-          exit 1
-        fi
-        echo "✅ 成功定位脚本: $SCRIPT_PATH"
+        curl -x $HTTP_PROXY -s ifconfig.me || echo "⚠️ 代理未生效，仍使用直连"
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
-          python3 $SCRIPT_PATH
+          python3 private_repo/therose.py
     # =======================================================
 
     # =======================================================
-    # 4. 清理旧的工作流运行记录
+    # 3. 清理旧记录（完全保持您原有的代码逻辑，没有改动）
     - name: 🧹 清理旧的工作流运行记录
       if: always()
       env:

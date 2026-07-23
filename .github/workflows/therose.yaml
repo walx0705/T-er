@@ -2,7 +2,7 @@ name: therose Auto Renew
 
 on:
   schedule:
-  - cron: '0 2 */3 * *'   # 每3天2点运行（UTC）
+  - cron: '0 7 * * *'   # 每天 UTC 7:00 运行（北京时间 15:00 / 下午3点）
   workflow_dispatch:
 
 jobs:
@@ -46,7 +46,7 @@ jobs:
         bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
     # =======================================================
-    # 2. 修改运行命令：从 app.py 改为指向 private_repo/therose.py
+    # 2. 修改运行命令：修复了 curl 因空代理而报错的逻辑
     - name: 🚀 运行续期脚本
       env:
         EMAIL: ${{ secrets.EMAIL }}
@@ -56,13 +56,19 @@ jobs:
         HTTP_PROXY: ${{ secrets.PROXY_URL || '' }}
         HTTPS_PROXY: ${{ secrets.PROXY_URL || '' }}
       run: |
-        curl -x $HTTP_PROXY -s ifconfig.me || echo "⚠️ 代理未生效，仍使用直连"
+        # 修复代理检查，避免空值导致报错
+        if [ -n "$HTTP_PROXY" ]; then
+          echo "🌐 代理地址为 $HTTP_PROXY"
+          curl -x $HTTP_PROXY -s ifconfig.me || echo "⚠️ 代理连接异常"
+        else
+          echo "⚠️ 未检测到代理环境变量，将使用直连"
+        fi
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
           python3 private_repo/therose.py
     # =======================================================
 
     # =======================================================
-    # 3. 此处完全保持您原来的写法，没有任何改动
+    # 3. 清理旧的工作流运行记录
     - name: 🧹 清理旧的工作流运行记录
       if: always()
       env:

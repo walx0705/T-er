@@ -79,7 +79,7 @@ jobs:
     # =======================================================
 
     # =======================================================
-    # 👇 关键修改：注入代理参数 + 开启无头模式
+    # 👇 关键修改：注入代理参数 + 开启无头模式 + 确保 requests 走代理
     - name: 🚀 运行续期脚本
       env:
         EMAIL: ${{ secrets.EMAIL }}
@@ -99,10 +99,13 @@ jobs:
           PROXY_URL="http://127.0.0.1:7890"
         fi
         
-        # 【核心修复】使用 sed 注入代码
-        # 将代码中 `headless=False)` 修改为 `headless=False, proxy='$PROXY_URL')`
-        # 这样 SeleniumBase 就会显式告诉 ChromeDriver 如何使用代理，解决 Bad Gateway
+        # 【核心修复】使用 sed 注入代理到浏览器参数
         sed -i "s|headless=False|headless=False, proxy='$PROXY_URL'|g" private_repo/therose.py
+        
+        # ===== 新增：让 Python 脚本中的 requests 也通过代理 =====
+        export HTTP_PROXY=$PROXY_URL
+        export HTTPS_PROXY=$PROXY_URL
+        # =====================================================
         
         # 运行脚本
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \

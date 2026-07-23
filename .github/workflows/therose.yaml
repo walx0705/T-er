@@ -15,7 +15,6 @@ jobs:
     steps:
     - uses: actions/checkout@v6
 
-    # =======================================================
     # 1. 精准拉取：仅拉取私库根目录下的 therose.py 这一个文件
     - name: 📥 拉取私库 therose.py
       uses: actions/checkout@v6
@@ -24,7 +23,6 @@ jobs:
         token: ${{ secrets.GH_TOKEN }}
         path: private_repo
         sparse-checkout: therose.py
-    # =======================================================
 
     - name: ⚙ 设置 Python
       uses: actions/setup-python@v6
@@ -38,31 +36,40 @@ jobs:
         pip install seleniumbase requests
         seleniumbase install chromedriver
 
-    - name: ⚙ 设置代理 (sing-box)
+    # =======================================================
+    # 🔥 核心修复点 1：动态提取代理地址并跨步骤传递
+    - name: ⚙ 设置代理 (sing-box) 并提取代理地址
       continue-on-error: true
       env:
         NODE_LINK: ${{ secrets.NODE_LINK }}
       run: |
-        bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
+        # 运行代理脚本，同时把日志保存到文件，方便从日志提取 socks5 地址
+        bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh) | tee proxy_output.log
+        
+        # 精准提取 PROXY_SERVER 这一行的地址（例如 socks5://127.0.0.1:1080）
+        PROXY_SERVER=$(grep -oP "PROXY_SERVER: \K.*" proxy_output.log)
+        
+        if [ -n "$PROXY_SERVER" ]; then
+          echo "✅ 成功提取代理地址: $PROXY_SERVER"
+          # 写入全局环境变量，这样下一环节的 Python 就能自动读取并使用代理
+          echo "HTTP_PROXY=$PROXY_SERVER" >> $GITHUB_ENV
+          echo "HTTPS_PROXY=$PROXY_SERVER" >> $GITHUB_ENV
+          echo "ALL_PROXY=$PROXY_SERVER" >> $GITHUB_ENV
+        else
+          echo "⚠️ 未检测到代理地址，后续将尝试使用直连"
+        fi
+        rm proxy_output.log
+    # =======================================================
 
     # =======================================================
-    # 2. 修改运行命令：修复了 curl 因空代理而报错的逻辑
+    # 🔥 核心修复点 2：直接运行，无需再写硬编码代理检测
     - name: 🚀 运行续期脚本
       env:
         EMAIL: ${{ secrets.EMAIL }}
         PASSWORD: ${{ secrets.PASSWORD }}
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        HTTP_PROXY: ${{ secrets.PROXY_URL || '' }}
-        HTTPS_PROXY: ${{ secrets.PROXY_URL || '' }}
       run: |
-        # 修复代理检查，避免空值导致报错
-        if [ -n "$HTTP_PROXY" ]; then
-          echo "🌐 代理地址为 $HTTP_PROXY"
-          curl -x $HTTP_PROXY -s ifconfig.me || echo "⚠️ 代理连接异常"
-        else
-          echo "⚠️ 未检测到代理环境变量，将使用直连"
-        fi
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
           python3 private_repo/therose.py
     # =======================================================

@@ -39,8 +39,8 @@ jobs:
         seleniumbase install chromedriver
 
     # =======================================================
-    # 👇 核心更新：设置代理并自动识别 HTTP 还是 SOCKS5 协议
-    - name: ⚙ 设置代理 (sing-box) 并自动识别端口与协议
+    # 设置代理并自动识别端口与协议
+    - name: ⚙ 设置代理 (sing-box) 并自动识别代理地址
       continue-on-error: true
       env:
         NODE_LINK: ${{ secrets.NODE_LINK }}
@@ -63,28 +63,23 @@ jobs:
           echo "✅ 成功自动获取到本地代理端口: $PORT"
         fi
         
-        # 3. 自动判断代理类型：究竟是 HTTP 还是 SOCKS5
+        # 3. 自动判断代理类型 (HTTP 还是 SOCKS5)
         PROXY_URL=""
         if curl -x http://127.0.0.1:$PORT -s -o /dev/null -w "%{http_code}" https://www.google.com 2>/dev/null | grep -q "200"; then
-            echo "✅ 协议识别为 HTTP"
             PROXY_URL="http://127.0.0.1:$PORT"
         elif curl -x socks5://127.0.0.1:$PORT -s -o /dev/null -w "%{http_code}" https://www.google.com 2>/dev/null | grep -q "200"; then
-            echo "✅ 协议识别为 SOCKS5"
             PROXY_URL="socks5://127.0.0.1:$PORT"
         else
-            echo "⚠️ 协议识别失败，默认尝试 HTTP"
             PROXY_URL="http://127.0.0.1:$PORT"
         fi
         
-        # 4. 将正确的代理环境变量注入后续步骤
-        echo "HTTP_PROXY=$PROXY_URL" >> $GITHUB_ENV
-        echo "HTTPS_PROXY=$PROXY_URL" >> $GITHUB_ENV
+        # 4. 把代理写入环境变量，传递给后续步骤
         echo "PROXY_URL=$PROXY_URL" >> $GITHUB_ENV
-        echo "✅ 成功挂载代理: $PROXY_URL"
+        echo "✅ 当前解析出的代理地址: $PROXY_URL"
     # =======================================================
 
     # =======================================================
-    # 👇 更新：安装 SOCKS5 支持并运行脚本
+    # 👇 关键修改：注入代理参数 + 开启无头模式
     - name: 🚀 运行续期脚本
       env:
         EMAIL: ${{ secrets.EMAIL }}
@@ -92,14 +87,22 @@ jobs:
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       run: |
-        echo "检测当前使用的代理: $HTTP_PROXY"
-        curl -x $HTTP_PROXY -s ifconfig.me || echo "⚠️ 代理未生效，仍使用直连"
+        echo "检测当前使用的代理: $PROXY_URL"
+        curl -x $PROXY_URL -s ifconfig.me || echo "⚠️ 代理未生效，仍使用直连"
         
-        # 如果识别出是 SOCKS5 代理，安装 pysocks 防止 Python 报错
+        # 如果代理是 SOCKS5，必须安装 pysocks 才能让 Python 请求通过
         pip install requests[socks]
         
-        # 强制修改为无头模式
-        sed -i 's/headless=False/headless=True/g' private_repo/therose.py
+        # 【核心修复】如果未检测到代理，则给一个默认的本地回退地址
+        if [ -z "$PROXY_URL" ]; then
+          echo "⚠️ PROXY_URL 变量为空，使用本地回退代理 http://127.0.0.1:7890"
+          PROXY_URL="http://127.0.0.1:7890"
+        fi
+        
+        # 【核心修复】使用 sed 注入代码
+        # 将代码中 `headless=False)` 修改为 `headless=False, proxy='$PROXY_URL')`
+        # 这样 SeleniumBase 就会显式告诉 ChromeDriver 如何使用代理，解决 Bad Gateway
+        sed -i "s|headless=False|headless=False, proxy='$PROXY_URL'|g" private_repo/therose.py
         
         # 运行脚本
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \

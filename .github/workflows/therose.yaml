@@ -46,7 +46,7 @@ jobs:
         bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
     # =======================================================
-    # 2. 修改运行命令：从 python3 app.py 改为拉取下来的 therose.py
+    # 2. 运行续期脚本（已删除报错的 curl 检测命令）
     - name: 🚀 运行续期脚本
       env:
         EMAIL: ${{ secrets.EMAIL }}
@@ -56,7 +56,6 @@ jobs:
         HTTP_PROXY: ${{ secrets.PROXY_URL || '' }}
         HTTPS_PROXY: ${{ secrets.PROXY_URL || '' }}
       run: |
-        curl -x $HTTP_PROXY -s ifconfig.me || echo "⚠️ 代理未生效，仍使用直连"
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
           python3 private_repo/therose.py
     # =======================================================

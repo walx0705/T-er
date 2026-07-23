@@ -38,31 +38,69 @@ jobs:
         pip install seleniumbase requests
         seleniumbase install chromedriver
 
-    - name: ⚙ 设置代理 (sing-box)
+    # =======================================================
+    # 👇 修改1：将 “设置代理” 改为 “设置代理并自动获取端口”
+    - name: ⚙ 设置代理 (sing-box) 并自动获取本地端口
       continue-on-error: true
       env:
         NODE_LINK: ${{ secrets.NODE_LINK }}
       run: |
+        # 1. 运行代理安装脚本
         bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
+        
+        # 2. 等待代理服务完全启动
+        sleep 3
+        
+        # 3. 自动寻找实际监听的端口 (避免硬编码)
+        PORT=""
+        # 优先从进程里面获取
+        PORT=$(ss -tlnp 2>/dev/null | grep sing-box | grep LISTEN | head -n1 | awk '{print $4}' | awk -F':' '{print $NF}')
+        # 如果进程获取失败，尝试去配置文件中找
+        if [ -z "$PORT" ]; then
+            if [ -f sing-box.json ]; then
+                PORT=$(grep -oP '"listen":\s*"[0-9.]+:\K[0-9]+' sing-box.json)
+            elif [ -f config.json ]; then
+                PORT=$(grep -oP '"listen":\s*"[0-9.]+:\K[0-9]+' config.json)
+            fi
+        fi
+        
+        # 设置备用端口，防止自动获取失败
+        if [ -z "$PORT" ]; then
+          echo "⚠️ 未检测到代理端口，将默认使用 7890"
+          PORT=7890
+        else
+          echo "✅ 成功自动获取到本地代理端口: $PORT"
+        fi
+        
+        # 4. 把代理写入 GitHub Actions 的环境变量，传递给后续所有步骤
+        echo "HTTP_PROXY=http://127.0.0.1:$PORT" >> $GITHUB_ENV
+        echo "HTTPS_PROXY=http://127.0.0.1:$PORT" >> $GITHUB_ENV
+    # =======================================================
 
     # =======================================================
-    # 2. 修改运行命令：从 python3 app.py 改为拉取下来的 therose.py
+    # 👇 修改2：移除 `secrets.PROXY_URL` 的依赖，并动态修复 headless 模式
     - name: 🚀 运行续期脚本
       env:
         EMAIL: ${{ secrets.EMAIL }}
         PASSWORD: ${{ secrets.PASSWORD }}
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        HTTP_PROXY: ${{ secrets.PROXY_URL || '' }}
-        HTTPS_PROXY: ${{ secrets.PROXY_URL || '' }}
+        # 现在这里不需要写 PROXY_URL 了，上一步已经自动注入到了 $HTTP_PROXY 中
       run: |
+        echo "检测当前使用的代理: $HTTP_PROXY"
         curl -x $HTTP_PROXY -s ifconfig.me || echo "⚠️ 代理未生效，仍使用直连"
+        
+        # 👇 关键修复：使用 sed 直接修改拉取下来的代码，强制开启无头模式 headless=True
+        # 这不会修改你原始私库的代码，只是在 Github 运行环境中替换
+        sed -i 's/headless=False/headless=True/g' private_repo/therose.py
+        
+        # 运行脚本（保留 xvfb-run 以提供兼容的虚拟显示环境）
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
           python3 private_repo/therose.py
     # =======================================================
 
     # =======================================================
-    # 3. 清理旧记录（完全保持您原有的代码逻辑，没有改动）
+    # 3. 清理旧记录
     - name: 🧹 清理旧的工作流运行记录
       if: always()
       env:

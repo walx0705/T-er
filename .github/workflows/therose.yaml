@@ -15,14 +15,15 @@ jobs:
     steps:
     - uses: actions/checkout@v6
 
-    # 1. 精准拉取：仅拉取私库根目录下的 therose.py 这一个文件
-    - name: 📥 拉取私库 therose.py
+    # =======================================================
+    # 1. 拉取完整私库
+    - name: 📥 拉取完整私库
       uses: actions/checkout@v6
       with:
         repository: walx0705/hosting
         token: ${{ secrets.GH_TOKEN }}
         path: private_repo
-        sparse-checkout: therose.py
+    # =======================================================
 
     - name: ⚙ 设置 Python
       uses: actions/setup-python@v6
@@ -33,36 +34,36 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y xvfb x11-utils xdotool scrot fonts-noto-cjk
-        pip install seleniumbase requests
+        pip install seleniumbase requests pysocks  # pysocks 是 socks5 代理必装
         seleniumbase install chromedriver
 
     # =======================================================
-    # 🔥 核心修复点 1：动态提取代理地址并跨步骤传递
-    - name: ⚙ 设置代理 (sing-box) 并提取代理地址
+    # 2. 设置代理（弃用日志提取，改用系统命令精准抓取端口）
+    - name: ⚙ 设置代理 (sing-box) 并自动识别端口
       continue-on-error: true
       env:
         NODE_LINK: ${{ secrets.NODE_LINK }}
       run: |
-        # 运行代理脚本，同时把日志保存到文件，方便从日志提取 socks5 地址
-        bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh) | tee proxy_output.log
+        # 启动代理 (不管代理脚本返回什么，都强制继续往下走)
+        bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh) || true
         
-        # 精准提取 PROXY_SERVER 这一行的地址（例如 socks5://127.0.0.1:1080）
-        PROXY_SERVER=$(grep -oP "PROXY_SERVER: \K.*" proxy_output.log)
+        echo "🔍 正在通过系统进程自动抓取代理端口..."
+        # 使用 ss 命令直接看 sing-box 占用了哪个端口，比抓日志精确一万倍
+        PORT=$(ss -tlnp 2>/dev/null | grep "sing-box" | grep -oP ":[0-9]+" | head -1 | tr -d ':')
         
-        if [ -n "$PROXY_SERVER" ]; then
-          echo "✅ 成功提取代理地址: $PROXY_SERVER"
-          # 写入全局环境变量，这样下一环节的 Python 就能自动读取并使用代理
-          echo "HTTP_PROXY=$PROXY_SERVER" >> $GITHUB_ENV
-          echo "HTTPS_PROXY=$PROXY_SERVER" >> $GITHUB_ENV
-          echo "ALL_PROXY=$PROXY_SERVER" >> $GITHUB_ENV
-        else
-          echo "⚠️ 未检测到代理地址，后续将尝试使用直连"
+        # 兜底机制：如果没抓到，默认用 1080
+        if [ -z "$PORT" ]; then
+          echo "⚠️ 自动识别端口失败，使用默认端口 1080"
+          PORT="1080"
         fi
-        rm proxy_output.log
+        
+        echo "✅ 成功设置代理端口: $PORT"
+        # 写入全局变量，供下一步强制使用
+        echo "PROXY_ADDR=socks5://127.0.0.1:$PORT" >> $GITHUB_ENV
     # =======================================================
 
     # =======================================================
-    # 🔥 核心修复点 2：直接运行，无需再写硬编码代理检测
+    # 3. 运行续期脚本（强制走代理）
     - name: 🚀 运行续期脚本
       env:
         EMAIL: ${{ secrets.EMAIL }}
@@ -70,12 +71,27 @@ jobs:
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
       run: |
+        echo "🌐 强制 Python 流量必须走代理：$PROXY_ADDR"
+        # 强制注入代理环境变量
+        export HTTP_PROXY="$PROXY_ADDR"
+        export HTTPS_PROXY="$PROXY_ADDR"
+        export ALL_PROXY="$PROXY_ADDR"
+        
+        # 自动定位脚本位置
+        SCRIPT_PATH=$(find private_repo -name "therose.py" | head -1)
+        if [ -z "$SCRIPT_PATH" ]; then
+          echo "❌ 致命错误：在私库中完全找不到 therose.py 文件！"
+          exit 1
+        fi
+        
+        echo "✅ 找到脚本: $SCRIPT_PATH"
+        # 启动虚拟显示器跑脚本
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
-          python3 private_repo/therose.py
+          python3 $SCRIPT_PATH
     # =======================================================
 
     # =======================================================
-    # 3. 清理旧的工作流运行记录
+    # 4. 清理旧的工作流运行记录
     - name: 🧹 清理旧的工作流运行记录
       if: always()
       env:

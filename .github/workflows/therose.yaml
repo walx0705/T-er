@@ -2,130 +2,126 @@ name: therose Auto Renew
 
 on:
   schedule:
-  - cron: '0 2 */3 * *'   # 每3天2点运行（UTC）
+    - cron: '0 2 */3 * *'   # 每3天2点运行（UTC）
   workflow_dispatch:
 
 jobs:
   Renew-therose:
     runs-on: ubuntu-latest
     permissions:
-      actions: write  
+      actions: write
       contents: read
-    
+
     steps:
-    - uses: actions/checkout@v6
+      - uses: actions/checkout@v6
 
-    # =======================================================
-    # 1. 精准拉取：仅将私库根目录下的 therose.py 拉取到 private_repo
-    - name: 📥 拉取私库 therose.py
-      uses: actions/checkout@v6
-      with:
-        repository: walx0705/hosting
-        token: ${{ secrets.GH_TOKEN }}
-        path: private_repo
-        sparse-checkout: therose.py
-    # =======================================================
+      # =======================================================
+      # 1. 精准拉取：仅将私库根目录下的 therose.py 拉取到 private_repo
+      - name: 📥 拉取私库 therose.py
+        uses: actions/checkout@v6
+        with:
+          repository: walx0705/hosting
+          token: ${{ secrets.GH_TOKEN }}
+          path: private_repo
+          sparse-checkout: therose.py
+      # =======================================================
 
-    - name: ⚙ 设置 Python
-      uses: actions/setup-python@v6
-      with:
-        python-version: '3.12'
+      - name: ⚙ 设置 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
 
-    - name: 🛠️ 安装系统依赖和python依赖
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y xvfb x11-utils xdotool scrot fonts-noto-cjk
-        pip install seleniumbase requests
-        seleniumbase install chromedriver
+      - name: 🛠️ 安装系统依赖和python依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb x11-utils xdotool scrot fonts-noto-cjk
+          pip install seleniumbase requests
+          seleniumbase install chromedriver
 
-    # =======================================================
-    # 设置代理并自动识别端口与协议
-    - name: ⚙ 设置代理 (sing-box) 并自动识别代理地址
-      continue-on-error: true
-      env:
-        NODE_LINK: ${{ secrets.NODE_LINK }}
-      run: |
-        # 1. 运行代理安装脚本
-        bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
-        sleep 3
-        
-        # 2. 自动获取本地监听端口
-        PORT=""
-        PORT=$(ss -tlnp 2>/dev/null | grep sing-box | grep LISTEN | head -n1 | awk '{print $4}' | awk -F':' '{print $NF}')
-        if [ -z "$PORT" ]; then
-            if [ -f sing-box.json ]; then PORT=$(grep -oP '"listen_port":\s*\K[0-9]+' sing-box.json); fi
-            if [ -f config.json ]; then PORT=$(grep -oP '"listen_port":\s*\K[0-9]+' config.json); fi
-        fi
-        if [ -z "$PORT" ]; then
-          echo "⚠️ 未检测到代理端口，默认尝试 1080"
-          PORT=1080
-        else
-          echo "✅ 成功自动获取到本地代理端口: $PORT"
-        fi
-        
-        # 3. 自动判断代理类型 (HTTP 还是 SOCKS5)
-        PROXY_URL=""
-        if curl -x http://127.0.0.1:$PORT -s -o /dev/null -w "%{http_code}" https://www.google.com 2>/dev/null | grep -q "200"; then
-            PROXY_URL="http://127.0.0.1:$PORT"
-        elif curl -x socks5://127.0.0.1:$PORT -s -o /dev/null -w "%{http_code}" https://www.google.com 2>/dev/null | grep -q "200"; then
-            PROXY_URL="socks5://127.0.0.1:$PORT"
-        else
-            PROXY_URL="http://127.0.0.1:$PORT"
-        fi
-        
-        # 4. 把代理写入环境变量，传递给后续步骤
-        echo "PROXY_URL=$PROXY_URL" >> $GITHUB_ENV
-        echo "✅ 当前解析出的代理地址: $PROXY_URL"
-    # =======================================================
+      # =======================================================
+      # 设置代理并自动识别端口与协议（优先 SOCKS5 解决 Chrome Bad Gateway）
+      - name: ⚙ 设置代理 (sing-box) 并自动识别代理地址
+        continue-on-error: true
+        env:
+          NODE_LINK: ${{ secrets.NODE_LINK }}
+        run: |
+          # 1. 运行代理安装脚本
+          bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
+          sleep 3
 
-    # =======================================================
-    # 👇 关键修改：注入代理参数 + 开启无头模式 + 确保 requests 走代理
-    - name: 🚀 运行续期脚本
-      env:
-        EMAIL: ${{ secrets.EMAIL }}
-        PASSWORD: ${{ secrets.PASSWORD }}
-        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-        TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-      run: |
-        echo "检测当前使用的代理: $PROXY_URL"
-        curl -x $PROXY_URL -s ifconfig.me || echo "⚠️ 代理未生效，仍使用直连"
-        
-        # 如果代理是 SOCKS5，必须安装 pysocks 才能让 Python 请求通过
-        pip install requests[socks]
-        
-        # 【核心修复】如果未检测到代理，则给一个默认的本地回退地址
-        if [ -z "$PROXY_URL" ]; then
-          echo "⚠️ PROXY_URL 变量为空，使用本地回退代理 http://127.0.0.1:7890"
-          PROXY_URL="http://127.0.0.1:7890"
-        fi
-        
-        # 【核心修复】使用 sed 注入代理到浏览器参数
-        sed -i "s|headless=False|headless=False, proxy='$PROXY_URL'|g" private_repo/therose.py
-        
-        # ===== 新增：让 Python 脚本中的 requests 也通过代理 =====
-        export HTTP_PROXY=$PROXY_URL
-        export HTTPS_PROXY=$PROXY_URL
-        # =====================================================
-        
-        # 运行脚本
-        xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
-          python3 private_repo/therose.py
-    # =======================================================
-
-    # =======================================================
-    # 3. 清理旧记录
-    - name: 🧹 清理旧的工作流运行记录
-      if: always()
-      env:
-        GH_TOKEN: ${{ github.token }}
-      run: |
-        runs=$(gh run list --workflow="${{ github.workflow }}" --limit=100 --json databaseId --jq '.[].databaseId')
-        count=0
-        for run_id in $runs; do
-          count=$((count + 1))
-          if [ $count -gt 1 ]; then
-            echo "删除运行记录: $run_id"
-            gh run delete $run_id || true
+          # 2. 自动获取本地监听端口
+          PORT=""
+          PORT=$(ss -tlnp 2>/dev/null | grep sing-box | grep LISTEN | head -n1 | awk '{print $4}' | awk -F':' '{print $NF}')
+          if [ -z "$PORT" ]; then
+              if [ -f sing-box.json ]; then PORT=$(grep -oP '"listen_port":\s*\K[0-9]+' sing-box.json); fi
+              if [ -f config.json ]; then PORT=$(grep -oP '"listen_port":\s*\K[0-9]+' config.json); fi
           fi
-        done
-    # =======================================================
+          if [ -z "$PORT" ]; then
+            echo "⚠️ 未检测到代理端口，默认尝试 1080"
+            PORT=1080
+          else
+            echo "✅ 成功自动获取到本地代理端口: $PORT"
+          fi
+
+          # 3. 优先 SOCKS5（解决 Chrome 使用 HTTP 代理时的 Bad Gateway 问题）
+          PROXY_URL=""
+          if curl -x socks5://127.0.0.1:$PORT -s -o /dev/null -w "%{http_code}" https://www.google.com 2>/dev/null | grep -q "200"; then
+              PROXY_URL="socks5://127.0.0.1:$PORT"
+          elif curl -x http://127.0.0.1:$PORT -s -o /dev/null -w "%{http_code}" https://www.google.com 2>/dev/null | grep -q "200"; then
+              PROXY_URL="http://127.0.0.1:$PORT"
+          else
+              PROXY_URL="socks5://127.0.0.1:$PORT"
+          fi
+
+          # 4. 把代理写入环境变量，传递给后续步骤
+          echo "PROXY_URL=$PROXY_URL" >> $GITHUB_ENV
+          echo "✅ 当前解析出的代理地址: $PROXY_URL"
+      # =======================================================
+
+      # =======================================================
+      # 运行续期脚本（注入代理 + 确保 requests 也走代理）
+      - name: 🚀 运行续期脚本
+        env:
+          EMAIL: ${{ secrets.EMAIL }}
+          PASSWORD: ${{ secrets.PASSWORD }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: |
+          echo "检测当前使用的代理: $PROXY_URL"
+          curl -x $PROXY_URL -s ifconfig.me || echo "⚠️ 代理未生效"
+
+          pip install requests[socks]
+
+          if [ -z "$PROXY_URL" ]; then
+            echo "⚠️ PROXY_URL 为空，使用本地回退代理 socks5://127.0.0.1:1080"
+            PROXY_URL="socks5://127.0.0.1:1080"
+          fi
+
+          # 注入代理到 Selenium
+          sed -i "s|headless=False|headless=False, proxy='$PROXY_URL'|g" private_repo/therose.py
+
+          # 让 requests 库也使用代理
+          export HTTP_PROXY=$PROXY_URL
+          export HTTPS_PROXY=$PROXY_URL
+
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
+            python3 private_repo/therose.py
+      # =======================================================
+
+      # =======================================================
+      # 3. 清理旧记录
+      - name: 🧹 清理旧的工作流运行记录
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          runs=$(gh run list --workflow="${{ github.workflow }}" --limit=100 --json databaseId --jq '.[].databaseId')
+          count=0
+          for run_id in $runs; do
+            count=$((count + 1))
+            if [ $count -gt 1 ]; then
+              echo "删除运行记录: $run_id"
+              gh run delete $run_id || true
+            fi
+          done
+      # =======================================================

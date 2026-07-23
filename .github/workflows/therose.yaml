@@ -1,12 +1,12 @@
-name: therose Auto Renew
+name: Trbump Auto Renew
 
 on:
   schedule:
-  - cron: '0 2 */3 * *'   # 每3天2点运行（UTC）
+  - cron: '0 */6 * * *'   # 每6小时运行一次（UTC）
   workflow_dispatch:
 
 jobs:
-  Renew-therose:
+  Renew-Trbump:
     runs-on: ubuntu-latest
     permissions:
       actions: write  
@@ -38,65 +38,31 @@ jobs:
         pip install seleniumbase requests
         seleniumbase install chromedriver
 
-    # =======================================================
-    # 2. 设置代理（全局环境变量，所有后续步骤和子进程都会继承）
-    - name: ⚙ 配置代理
+    - name: ⚙ 设置代理 (sing-box)
+      continue-on-error: true
       env:
         NODE_LINK: ${{ secrets.NODE_LINK }}
-        PROXY_URL: ${{ secrets.PROXY_URL }}
       run: |
-        echo "🔍 检查代理变量是否设置..."
-        if [ -z "$PROXY_URL" ]; then
-          echo "⚠️ 警告: PROXY_URL 为空，将尝试使用 sing-box 自动配置"
-          bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh) || true
-        else
-          echo "✅ 使用预设代理: $PROXY_URL"
-          echo ">>> 设置全局代理环境变量..."
-          echo "export http_proxy=$PROXY_URL" >> $GITHUB_ENV
-          echo "export https_proxy=$PROXY_URL" >> $GITHUB_ENV
-          echo "export HTTP_PROXY=$PROXY_URL" >> $GITHUB_ENV
-          echo "export HTTPS_PROXY=$PROXY_URL" >> $GITHUB_ENV
-          # 同时设置给 git
-          git config --global http.proxy $PROXY_URL
-          git config --global https.proxy $PROXY_URL
-          # 测试代理
-          echo ">>> 测试代理连通性..."
-          curl -v --proxy $PROXY_URL -s --max-time 10 https://ifconfig.me || echo "⚠️ 代理测试失败"
-        fi
+        bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
 
     # =======================================================
-    # 3. 运行续期脚本
+    # 2. 修改运行命令：从 python3 app.py 改为拉取下来的 therose.py
     - name: 🚀 运行续期脚本
       env:
         EMAIL: ${{ secrets.EMAIL }}
         PASSWORD: ${{ secrets.PASSWORD }}
         TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
         TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        PROXY_URL: ${{ secrets.PROXY_URL }}
+        HTTP_PROXY: ${{ secrets.PROXY_URL || '' }}
+        HTTPS_PROXY: ${{ secrets.PROXY_URL || '' }}
       run: |
-        echo "========================================"
-        echo "  📋 代理环境检查"
-        echo "========================================"
-        echo "PROXY_URL=$PROXY_URL"
-        echo "http_proxy=$http_proxy"
-        echo "https_proxy=$https_proxy"
-        echo "HTTP_PROXY=$HTTP_PROXY"
-        echo "HTTPS_PROXY=$HTTPS_PROXY"
-        echo "========================================"
-
-        # 用代理测试连通性
-        if [ -n "$PROXY_URL" ]; then
-          echo ">>> 代理测试 (curl --proxy)..."
-          curl --proxy $PROXY_URL -s --max-time 10 ifconfig.me && echo " ✅ 代理正常" || echo " ⚠️ 代理测试失败"
-        fi
-
-        echo ">>> 启动浏览器自动化..."
+        curl -x $HTTP_PROXY -s ifconfig.me || echo "⚠️ 代理未生效，仍使用直连"
         xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
           python3 private_repo/therose.py
     # =======================================================
 
     # =======================================================
-    # 4. 清理旧记录（完全保持您原有的代码逻辑，没有改动）
+    # 3. 清理旧记录（完全保持您原有的代码逻辑，没有改动）
     - name: 🧹 清理旧的工作流运行记录
       if: always()
       env:
@@ -105,7 +71,7 @@ jobs:
         runs=$(gh run list --workflow="${{ github.workflow }}" --limit=100 --json databaseId --jq '.[].databaseId')
         count=0
         for run_id in $runs; do
-          count=$((count - 1))
+          count=$((count + 1))
           if [ $count -gt 1 ]; then
             echo "删除运行记录: $run_id"
             gh run delete $run_id || true

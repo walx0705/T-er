@@ -1,0 +1,80 @@
+name: therose Auto Renew
+
+on:
+  schedule:
+  - cron: '0 2 */3 * *'   # 每3天2点运行（UTC）
+  workflow_dispatch:
+
+jobs:
+  Renew-therose:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write  
+      contents: read
+    
+    steps:
+    - uses: actions/checkout@v6
+
+    # =======================================================
+    # 1. 精准拉取：仅拉取私库根目录下的 therose.py 这一个文件
+    - name: 📥 拉取私库 therose.py
+      uses: actions/checkout@v6
+      with:
+        repository: walx0705/hosting
+        token: ${{ secrets.GH_TOKEN }}
+        path: private_repo
+        sparse-checkout: therose.py
+    # =======================================================
+
+    - name: ⚙ 设置 Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+
+    - name: 🛠️ 安装系统依赖和python依赖
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y xvfb x11-utils xdotool scrot fonts-noto-cjk
+        pip install seleniumbase requests
+        seleniumbase install chromedriver
+
+    - name: ⚙ 设置代理 (sing-box)
+      continue-on-error: true
+      env:
+        NODE_LINK: ${{ secrets.NODE_LINK }}
+      run: |
+        bash <(wget -qO- https://main.ssss.nyc.mn/setup_proxy.sh)
+
+    # =======================================================
+    # 2. 修改运行命令：从 app.py 改为指向 private_repo/therose.py
+    - name: 🚀 运行续期脚本
+      env:
+        EMAIL: ${{ secrets.EMAIL }}
+        PASSWORD: ${{ secrets.PASSWORD }}
+        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+        TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        HTTP_PROXY: ${{ secrets.PROXY_URL || '' }}
+        HTTPS_PROXY: ${{ secrets.PROXY_URL || '' }}
+      run: |
+        curl -x $HTTP_PROXY -s ifconfig.me || echo "⚠️ 代理未生效，仍使用直连"
+        xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
+          python3 private_repo/therose.py
+    # =======================================================
+
+    # =======================================================
+    # 3. 此处完全保持您原来的写法，没有任何改动
+    - name: 🧹 清理旧的工作流运行记录
+      if: always()
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        runs=$(gh run list --workflow="${{ github.workflow }}" --limit=100 --json databaseId --jq '.[].databaseId')
+        count=0
+        for run_id in $runs; do
+          count=$((count + 1))
+          if [ $count -gt 1 ]; then
+            echo "删除运行记录: $run_id"
+            gh run delete $run_id || true
+          fi
+        done
+    # =======================================================

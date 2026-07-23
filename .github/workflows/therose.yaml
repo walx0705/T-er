@@ -1,4 +1,4 @@
-name: Trbump Auto Renew
+name: therose Auto Renew
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  Renew-Trbump:
+  Renew-therose:
     runs-on: ubuntu-latest
     permissions:
       actions: write  
